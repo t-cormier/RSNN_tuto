@@ -87,7 +87,7 @@ class CellConstraint(keras.constraints.Constraint):
 class LIFCell(layers.Layer):
     """RSNN model for the Experiemnt (LIF)"""
 
-    def __init__(self, units, connectivity=0.2, ei_ratio=0.2, tau=20., thr=1., dt=1, n_refractory=5, dampening_factor=.3):
+    def __init__(self, units, connectivity=0.2, ei_ratio=0.2, tau=20., tau_readout=30., thr=1., dt=1, n_refractory=5, dampening_factor=.3):
         super().__init__()
         self.units = units
         self.n_exc = int(self.units * ei_ratio)
@@ -95,6 +95,7 @@ class LIFCell(layers.Layer):
 
         self._dt = float(dt)
         self._decay = tf.exp(-dt / tau)
+        self._readout_decay = tf.exp(-dt / tau_readout)
         self._n_refractory = n_refractory
         self._connect = connectivity
 
@@ -158,7 +159,7 @@ class LIFCell(layers.Layer):
             0,
             self._n_refractory)
 
-        
+
 
         new_state = (new_v, new_r, new_z)
         output = (new_v, new_z)
@@ -169,8 +170,14 @@ class LIFCell(layers.Layer):
 
 
 ############# Metrics and gradients ################
-def compute_cn_activity(arg):
+def compute_cn_activity(z, idx_cn):
+    z_cn = z[:,:,idx_cn]
+    z_convolved = exp_convolve(z_cn, )
+
+
+def compute_avg_activity(arg):
     pass
+
 
 def compute_etrace(model, v, z):
     v_scaled = tf.identity((v - model.cell.threshold) / model.cell.threshold, name='v_scaled')
@@ -183,20 +190,38 @@ def compute_etrace(model, v, z):
     eligibility_traces_w_rec = tf.identity(post_term[:, :, None, :] * pre_term_w_rec[:, :, :, None], name='etrace_rec')
     eligibility_traces_convolved_w_rec = tf.identity(exp_convolve(eligibility_traces_w_rec), name='fetrace_rec')
 
+    # Warning : Only LTP implemented here
     return eligibility_traces_convolved_w_rec
 
+
 def reward_kernel(time, A_p=1.379, A_m=0.27, tau_p=0.2, tau_m=1.):
-    kernel_p = A_p * time / tau_p * np.exp(1 - time / tau_p)
-    kernel_m = A_m * time / tau_m * np.exp(1 - time / tau_m)
+    t = time/250 # very important hyper parameter in order to make the dopamine model work
+    kernel_p = A_p * t / tau_p * np.exp(1 - t / tau_p)
+    kernel_m = A_m * t / tau_m * np.exp(1 - t / tau_m)
     return kernel_p - kernel_m
 
-def compute_dopamine(z):
+
+def compute_dopamine(z, idx_cn, r_kernel=reward_kernel):
     # switch to time major
-    # define the scan fun (z and reward kernel)
-    # define initializer
-    # scan the time major z with the scan fun
-    # switch back to batch_size major
+    shp = z.get_shape()
+    seq_len = shp[1]
+    r_shp = range(len(shp))
+    transpose_perm = [1, 0] + list(r_shp)[2:]
+    z_time_major = tf.transpose(z, perm=transpose_perm)
+
+    def xi_r(t):
+        return tf.constant([r_kernel(i) for i in range(t)], shape=(t,1), dtype=tf.float32)
+
+    d = tf.constant([tf.reduce_sum(xi_r(t) * z_time_major[t:0:-1, :, idx_cn]).numpy() for t in range(seq_len)], shape=(1,seq_len,1), dtype=tf.float32)
+
+    return d
+
+def compute_leg_gradients(d, etrace):
     pass
+
+
+
+
 
 
 ############ Experiment model ##############
@@ -220,9 +245,11 @@ class Exp_model(keras.Model):
 class Leg_fit(keras.model):
     """Custom model.fit for (Legenstein and al., 2008) learning rule"""
 
-    def __init__(self, model):
+    def __init__(self, model, cn_idx):
         super(Leg_fit, self).__init__()
         self.model = model
+        assert cn_idx in np.arange(self.model.cell.units)
+        self.cn = cn_idx
 
     def train_step(self, data):
         x, y = data
@@ -230,7 +257,17 @@ class Leg_fit(keras.model):
         v, z = self.model(x)
 
         # compute the metric (here it is the activity of the conditioned neuron)
+        metric_cn_act = compute_cn_activity(self.model, self.cn, z)
+        metric_avg_act = compute_avg_activity(z)
 
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
+        d = compute_dopamine(self.cn, z)
+        etrace = compute_etrace(self.model, v, z)
+
+        grads = compute_leg_gradients(d, etrace)
+        vars = self.model.trainable_variables
 
         # Apply the gradients
+        self.optimizer.apply_gradients(zip(vars, grads))
+
+        return {'CN activity' : metric_cn_act, 'avg activity' : metric_avg_act}

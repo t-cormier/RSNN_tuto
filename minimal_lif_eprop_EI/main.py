@@ -27,7 +27,7 @@ it = iter(dataset)
 test_example = next(it)
 
 # define the training model
-eprop = m.Eprop_fit(exp_model)
+eprop = m.Eprop_fit(exp_model, method="random")
 opt = m.keras.optimizers.Adam(lr=1e-3)
 eprop.compile(optimizer = opt)
 

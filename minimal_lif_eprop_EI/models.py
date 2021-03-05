@@ -212,7 +212,6 @@ def compute_learning_signals(error, w_out):
 def compute_eprop_gradients(model, v, z, x , error1, error2, learning_signals, reg):
     v_scaled = tf.identity((v - model.cell.threshold) / model.cell.threshold, name='v_scaled')
     z_previous_time = shift_by_one_time_step(z)
-    print(z)
 
     # Compute psi considering refractory period neurons
     psi_no_ref = pseudo_derivative(v_scaled, model.cell._dampening_factor) / model.cell.threshold
@@ -298,7 +297,7 @@ class Eprop_fit(keras.Model):
             self.method = method
 
         assert method in ['symmetric', 'random', 'autodiff'], "Eprop method not defined properly : symmetric, random or autodiff"
-
+        self.b_random = tf.constant(np.random.randn(self.model.cell.units, 1) / np.sqrt(self.model.cell.units), dtype=tf.float32, name='B_random')
         if self.method == 'autodiff' :
             self.model.cell._stop_gradients = True
 
@@ -328,8 +327,8 @@ class Eprop_fit(keras.Model):
             w_out = self.model.weighted_out_projection.trainable_weights[0]
             learning_signals = compute_learning_signals(output_error, w_out)
         elif self.method == "random" :
-            B_random = tf.constant(np.random.randn(self.model.cell.units, 1) / np.sqrt(self.model.cell.units), dtype=tf.float32, name='B_random')
-            learning_signals = compute_learning_signals(output_error, w_out)
+            B_random = self.b_random
+            learning_signals = compute_learning_signals(output_error, B_random)
 
         vars = self.model.trainable_weights
 

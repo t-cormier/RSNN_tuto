@@ -278,7 +278,7 @@ class Eprop_fit(keras.Model):
 
         if self.method == 'autodiff' :
             self.model.cell._stop_gradients = True
-
+        self.b_random = tf.constant(np.random.randn(self.model.cell.units, 1) / np.sqrt(self.model.cell.units), dtype=tf.float32, name='B_random')
         self.reg = 300
 
 
@@ -309,8 +309,8 @@ class Eprop_fit(keras.Model):
             w_out = self.model.weighted_out_projection.trainable_weights[0]
             learning_signals = compute_learning_signals(output_error, w_out)
         elif self.method == "random" :
-            B_random = tf.constant(np.random.randn(self.model.cell.units, 1) / np.sqrt(self.model.cell.units), dtype=tf.float32, name='B_random')
-            learning_signals = compute_learning_signals(output_error, w_out)
+            B_random = self.b_random
+            learning_signals = compute_learning_signals(output_error, B_random)
 
         vars = self.model.trainable_weights
 
