@@ -170,13 +170,15 @@ class LIFCell(layers.Layer):
 
 
 ############# Metrics and gradients ################
-def compute_cn_activity(z, idx_cn):
+def compute_cn_activity(model, z, idx_cn):
     z_cn = z[:,:,idx_cn]
-    z_convolved = exp_convolve(z_cn, )
+    z_cn_convolved = exp_convolve(z_cn)
+    return z_cn_convolved  #shape=(1,1000)
 
 
 def compute_avg_activity(arg):
-    pass
+    z_convolved = exp_convolve(z)
+    return tf.reduce_mean(z_convolved, axis=2) # shape=(1,1000)
 
 
 def compute_etrace(model, v, z):
@@ -212,9 +214,9 @@ def compute_dopamine(z, idx_cn, r_kernel=reward_kernel):
     def xi_r(t):
         return tf.constant([r_kernel(i) for i in range(t)], shape=(t,1), dtype=tf.float32)
 
-    d = tf.constant([tf.reduce_sum(xi_r(t) * z_time_major[t:0:-1, :, idx_cn]).numpy() for t in range(seq_len)], shape=(1,seq_len,1), dtype=tf.float32)
+    d = tf.constant([tf.reduce_sum(xi_r(t) * z_time_major[t:0:-1, :, idx_cn]).numpy() for t in range(seq_len)], shape=(1,seq_len), dtype=tf.float32)
 
-    return d
+    return d #shape=(1,1000)
 
 def compute_leg_gradients(d, etrace):
     pass
@@ -242,7 +244,7 @@ class Exp_model(keras.Model):
 
 
 
-class Leg_fit(keras.model):
+class Leg_fit(keras.Model):
     """Custom model.fit for (Legenstein and al., 2008) learning rule"""
 
     def __init__(self, model, cn_idx):

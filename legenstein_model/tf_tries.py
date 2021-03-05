@@ -3,7 +3,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 import matplotlib.pyplot as plt
-
+import models as m
 
 etrace = tf.cast(tf.random.uniform(shape=(1,1000,100,100))>0.8, tf.float32)
 # d = tf.cast(tf.random.uniform(shape=(1,1000,1))>0.8, tf.float32)
@@ -31,5 +31,4 @@ def compute_dopamine(z, idx_cn, r_kernel=reward_kernel):
 
     return d
 
-d = compute_dopamine(z, 2)
-print(d)
+print(m.exp_convolve(z[:,:,3]))
