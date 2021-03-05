@@ -1,3 +1,4 @@
 
 .DS_Store
 minimal_lif
+__pycache__/
