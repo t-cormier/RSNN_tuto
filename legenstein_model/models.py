@@ -69,6 +69,13 @@ def shift_by_one_time_step(tensor, initializer=None):
 
 
 
+######### Create Dataset for Experiment###############
+def create_data_set(seq_len, n_input, itr=20, n_batch=1):
+    x = tf.random.uniform(shape=(seq_len, n_input))[None] * .5
+    y = tf.zeros(shape=(1, seq_len, 1))
+    return tf.data.Dataset.from_tensor_slices((x, y)).repeat(count=itr).batch(n_batch)
+
+
 
 ####### Layer definition #########
 class CellConstraint(keras.constraints.Constraint):
@@ -87,17 +94,14 @@ class CellConstraint(keras.constraints.Constraint):
 class LIFCell(layers.Layer):
     """RSNN model for the Experiemnt (LIF)"""
 
-    def __init__(self, units, connectivity=0.2, ei_ratio=0.2, tau=20., tau_readout=30., thr=1., dt=1, n_refractory=5, dampening_factor=.3):
+    def __init__(self, units, tau=20., tau_readout=50., thr=1., dt=1, n_refractory=5, dampening_factor=.3):
         super().__init__()
         self.units = units
-        self.n_exc = int(self.units * ei_ratio)
-        self.n_inh = self.units - self.n_exc
 
         self._dt = float(dt)
         self._decay = tf.exp(-dt / tau)
         self._readout_decay = tf.exp(-dt / tau_readout)
         self._n_refractory = n_refractory
-        self._connect = connectivity
 
 
         self.threshold = thr
@@ -117,23 +121,16 @@ class LIFCell(layers.Layer):
         self.input_weights = self.add_weight(shape=(input_shape[-1], self.units),
                                              initializer=tf.keras.initializers.RandomNormal(
                                                  stddev=1. / np.sqrt(input_shape[-1] + self.units)),
+                                             trainable=False,
                                              name='input_weights')
 
         self.recurrent_weights = self.add_weight(shape=(self.units, self.units),
                                                  initializer=tf.keras.initializers.Orthogonal(gain=.7),
                                                  name='recurrent_weights')
 
-        # Masks
-        self.disconnect_mask = tf.cast(np.diag(np.ones(self.units, dtype=np.bool)), tf.bool)
-        nump_connectivity_mat = (np.random.uniform(size=(self.units, self.units)) < self._connect)
-        self.connectivity_mask = tf.cast(nump_connectivity_mat, tf.bool)
-        nump_EI_mat = np.concatenate((np.ones((self.units, self.n_exc), dtype=np.bool),
-                                     np.zeros((self.units, self.n_inh), dtype=np.bool)),
-                                     axis=1)
-        self.EI_mask = tf.cast(nump_EI_mat, tf.bool)
 
-        # Constraint
-        self.constraint = CellConstraint(self.connectivity_mask, self.EI_mask, self.disconnect_mask)
+        self.disconnect_mask = tf.cast(np.diag(np.ones(self.units, dtype=np.bool)), tf.bool)
+
         super().build(input_shape)
 
     def call(self, inputs, state):
@@ -141,10 +138,10 @@ class LIFCell(layers.Layer):
         old_r = state[1]
         old_z = state[2]
 
-        corrected_w = self.constraint(self.recurrent_weights)
+        no_autapse_w_rec = tf.where(self.disconnect_mask, tf.zeros_like(self.recurrent_weights), self.recurrent_weights)
 
         i_in = tf.matmul(inputs, self.input_weights)
-        i_rec = tf.matmul(old_z, corrected_w)
+        i_rec = tf.matmul(old_z, no_autapse_w_rec)
         i_reset = -self.threshold * old_z
         input_current = i_in + i_rec + i_reset
 
@@ -159,8 +156,6 @@ class LIFCell(layers.Layer):
             0,
             self._n_refractory)
 
-
-
         new_state = (new_v, new_r, new_z)
         output = (new_v, new_z)
 
@@ -170,15 +165,10 @@ class LIFCell(layers.Layer):
 
 
 ############# Metrics and gradients ################
-def compute_cn_activity(model, z, idx_cn):
-    z_cn = z[:,:,idx_cn]
-    z_cn_convolved = exp_convolve(z_cn)
-    return z_cn_convolved  #shape=(1,1000)
 
-
-def compute_avg_activity(arg):
-    z_convolved = exp_convolve(z)
-    return tf.reduce_mean(z_convolved, axis=2) # shape=(1,1000)
+def compute_avg_activity(model, z):
+    av = tf.reduce_mean(z, axis=(0, 1))
+    return av # shape=(1,100)
 
 
 def compute_etrace(model, v, z):
@@ -188,28 +178,29 @@ def compute_etrace(model, v, z):
 
     pre_term_w_rec = tf.identity(exp_convolve(z_previous_time, decay=model.cell._decay), name = 'z_bar')
 
-    # Eligibility traces
+    # Eligibility traces                                 # adding None as a dimension grants the right product
     eligibility_traces_w_rec = tf.identity(post_term[:, :, None, :] * pre_term_w_rec[:, :, :, None], name='etrace_rec')
     eligibility_traces_convolved_w_rec = tf.identity(exp_convolve(eligibility_traces_w_rec), name='fetrace_rec')
 
     # Warning : Only LTP implemented here
-    return eligibility_traces_convolved_w_rec
+    return eligibility_traces_convolved_w_rec #shape=(None, 1000, 100, 100)
 
 
-def reward_kernel(time, A_p=1.379, A_m=0.27, tau_p=0.2, tau_m=1.):
-    t = time/250 # very important hyper parameter in order to make the dopamine model work
+def reward_kernel(time, A_p=1.379, A_m=0.27, tau_p=0.2, tau_m=1., scale=250):
+    t = time / scale # very important hyper parameter in order to make the dopamine model work
     kernel_p = A_p * t / tau_p * np.exp(1 - t / tau_p)
     kernel_m = A_m * t / tau_m * np.exp(1 - t / tau_m)
     return kernel_p - kernel_m
 
 
-def compute_dopamine(z, idx_cn, r_kernel=reward_kernel):
+def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
     # switch to time major
     shp = z.get_shape()
     seq_len = shp[1]
     r_shp = range(len(shp))
     transpose_perm = [1, 0] + list(r_shp)[2:]
     z_time_major = tf.transpose(z, perm=transpose_perm)
+    z_time_major = tf.cast(z_time_major, dtype=tf.float32)
 
     def xi_r(t):
         return tf.constant([r_kernel(i) for i in range(t)], shape=(t,1), dtype=tf.float32)
@@ -218,8 +209,15 @@ def compute_dopamine(z, idx_cn, r_kernel=reward_kernel):
 
     return d #shape=(1,1000)
 
-def compute_leg_gradients(d, etrace):
-    pass
+def loss_fn(error):
+    return 0.5 * tf.reduce_sum((error) ** 2)
+
+def reg_loss(z, target_rate=0.08):
+    av = tf.reduce_mean(z, axis=(0, 1))
+    average_firing_rate_error = av - target_rate
+    return loss_fn(average_firing_rate_error), average_firing_rate_error
+
+
 
 
 
@@ -247,29 +245,38 @@ class Exp_model(keras.Model):
 class Leg_fit(keras.Model):
     """Custom model.fit for (Legenstein and al., 2008) learning rule"""
 
-    def __init__(self, model, cn_idx):
+    def __init__(self, model, cn_idx, tboard=True):
         super(Leg_fit, self).__init__()
         self.model = model
         assert cn_idx in np.arange(self.model.cell.units)
         self.cn = cn_idx
 
+
     def train_step(self, data):
         x, y = data
+        with tf.GradientTape() as tape :
+            v, z = self.model(x)
+            regularization_loss, _ = reg_loss(z)
 
-        v, z = self.model(x)
-
-        # compute the metric (here it is the activity of the conditioned neuron)
-        metric_cn_act = compute_cn_activity(self.model, self.cn, z)
-        metric_avg_act = compute_avg_activity(z)
+        # compute the metric and losses(here it is the activity of the conditioned neuron)
+        avg_act = compute_avg_activity(self.model, z)
+        avg_act_cn = avg_act[self.cn]
+        mask = np.zeros(len(avg_act.numpy()))
+        mask[self.cn] = 1
+        mask = tf.cast(mask, dtype=bool)
+        avg_act_nocn = tf.reduce_mean(tf.where(mask, tf.zeros_like(avg_act), avg_act))
 
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
-        d = compute_dopamine(self.cn, z)
-        etrace = compute_etrace(self.model, v, z)
-
-        grads = compute_leg_gradients(d, etrace)
         vars = self.model.trainable_variables
 
-        # Apply the gradients
-        self.optimizer.apply_gradients(zip(vars, grads))
+        d = compute_dopamine(self.cn, z)
+        etrace = compute_etrace(self.model, v, z)
+        leg_grads = tf.reduce_sum(d[:, :, None, None] * etrace, axis=(0, 1), name='leg_grads')
+        reg_grads = tape.gradient(regularization_loss, vars)
+        grads = reg_grads + leg_grads
 
-        return {'CN activity' : metric_cn_act, 'avg activity' : metric_avg_act}
+
+        # Apply the gradients
+        self.optimizer.apply_gradients(zip(grads, vars))
+
+        return {'CN activity' : avg_act_cn, 'avg activity' : avg_act_nocn, 'reg_loss' : regularization_loss}
