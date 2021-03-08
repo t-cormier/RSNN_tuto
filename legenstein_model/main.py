@@ -11,24 +11,30 @@ import models as m
 tf.config.run_functions_eagerly(True)
 
 ######## Constants #######
-seq_len=1000
+seq_len=1000 #ms
 n_input=20
 n_recurrent=100
 cn_idx = 10
-epochs = 1
+epochs = 2
+num_itr = 200
 
 
-
-######## Train ###########
-# init
+######## Init experiment ###########
 exp_model = m.Exp_model(n_recurrent, n_input, seq_len)
-dataset = m.create_data_set(seq_len, n_input)
+dataset = m.create_data_set(seq_len, n_input, itr = num_itr)
 
 
+####### Tensorboard callback #########
+tb_callbacks = tf.keras.callbacks.TensorBoard(log_dir = 'logs',
+                                              histogram_freq=0,
+                                              write_graph=False,
+                                              update_freq='batch')
 
-# define the training model
+######### Train ####################@
 leg = m.Leg_fit(exp_model, cn_idx)
+cn_activity = m.Activity_metric(cn_idx, name='CN activity')
+activity = m.Activity_metric(name='avg activity')
 opt = keras.optimizers.Adam(lr=1e-3)
-leg.compile(optimizer = opt)
+leg.compile(optimizer = opt, metrics=[cn_activity, activity])
 
-leg.fit(dataset, epochs=epochs)
+leg.fit(dataset, epochs=epochs, callbacks=tb_callbacks)

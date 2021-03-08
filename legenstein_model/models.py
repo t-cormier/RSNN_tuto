@@ -71,7 +71,7 @@ def shift_by_one_time_step(tensor, initializer=None):
 
 ######### Create Dataset for Experiment###############
 def create_data_set(seq_len, n_input, itr=20, n_batch=1):
-    x = tf.random.uniform(shape=(seq_len, n_input))[None] * .5
+    x = tf.random.uniform(shape=(seq_len, n_input))[None] * 0.5
     y = tf.zeros(shape=(1, seq_len, 1))
     return tf.data.Dataset.from_tensor_slices((x, y)).repeat(count=itr).batch(n_batch)
 
@@ -186,7 +186,7 @@ def compute_etrace(model, v, z):
     return eligibility_traces_convolved_w_rec #shape=(None, 1000, 100, 100)
 
 
-def reward_kernel(time, A_p=1.379, A_m=0.27, tau_p=0.2, tau_m=1., scale=250):
+def reward_kernel(time, A_p=1.379, A_m=0.27, tau_p=0.2, tau_m=1., scale=500):
     t = time / scale # very important hyper parameter in order to make the dopamine model work
     kernel_p = A_p * t / tau_p * np.exp(1 - t / tau_p)
     kernel_m = A_m * t / tau_m * np.exp(1 - t / tau_m)
@@ -209,17 +209,38 @@ def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
 
     return d #shape=(1,1000)
 
-def loss_fn(error):
-    return 0.5 * tf.reduce_sum((error) ** 2)
 
-def reg_loss(z, target_rate=0.08):
+def reg_loss(z, cn_idx, target_rate=0.08):
     av = tf.reduce_mean(z, axis=(0, 1))
-    average_firing_rate_error = av - target_rate
-    return loss_fn(average_firing_rate_error), average_firing_rate_error
+    print('\ncn_av regloss', av[cn_idx])
+    average_firing_rate_error = target_rate - av[cn_idx]
+    regularization_loss = tf.maximum(average_firing_rate_error, 0)
+    return regularization_loss
 
 
+############### metrics ###################
+class Activity_metric(tf.keras.metrics.Metric):
+    """ Activity metrics for the conditioned neuron and the whole network """
+    def __init__(self, cn_idx=None, name="activity_metric", **kwargs):
+        super(Activity_metric, self).__init__(name=name, **kwargs)
+        self.cn_idx = cn_idx
+        self.avg_act = None
+        self.avg_act_cn = None
 
 
+    def update_state(self, y_true, z_pred, sample_weight=None):
+        avg_activity = tf.reduce_mean(z_pred, axis=(0, 1))
+        if self.cn_idx == None :
+            self.avg_act = tf.reduce_mean(avg_activity)
+        else :
+            self.avg_act_cn = avg_activity[self.cn_idx]
+            assert self.avg_act_cn > 0, "Conditioned neuron has no spontaneous activity"
+
+    def result(self):
+        if self.cn_idx == None :
+            return self.avg_act
+        else :
+            return self.avg_act_cn
 
 
 
@@ -245,7 +266,7 @@ class Exp_model(keras.Model):
 class Leg_fit(keras.Model):
     """Custom model.fit for (Legenstein and al., 2008) learning rule"""
 
-    def __init__(self, model, cn_idx, tboard=True):
+    def __init__(self, model, cn_idx):
         super(Leg_fit, self).__init__()
         self.model = model
         assert cn_idx in np.arange(self.model.cell.units)
@@ -256,15 +277,10 @@ class Leg_fit(keras.Model):
         x, y = data
         with tf.GradientTape() as tape :
             v, z = self.model(x)
-            regularization_loss, _ = reg_loss(z)
+            regularization_loss_cn = reg_loss(z, self.cn)
+            print('regloss after model : ', regularization_loss_cn)
 
-        # compute the metric and losses(here it is the activity of the conditioned neuron)
-        avg_act = compute_avg_activity(self.model, z)
-        avg_act_cn = avg_act[self.cn]
-        mask = np.zeros(len(avg_act.numpy()))
-        mask[self.cn] = 1
-        mask = tf.cast(mask, dtype=bool)
-        avg_act_nocn = tf.reduce_mean(tf.where(mask, tf.zeros_like(avg_act), avg_act))
+        self.compiled_metrics.update_state(y, z)
 
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
         vars = self.model.trainable_variables
@@ -272,11 +288,22 @@ class Leg_fit(keras.Model):
         d = compute_dopamine(self.cn, z)
         etrace = compute_etrace(self.model, v, z)
         leg_grads = tf.reduce_sum(d[:, :, None, None] * etrace, axis=(0, 1), name='leg_grads')
-        reg_grads = tape.gradient(regularization_loss, vars)
-        grads = reg_grads + leg_grads
-
-
+        reg_grads = tape.gradient(regularization_loss_cn, vars)
+        print('regloss after tape : ', regularization_loss_cn)
+        grads = reg_grads # + leg_grads
+        
+        # show the gradients as Metrics
+        metric_leg_grads = tf.reduce_mean(leg_grads)
+        metric_reg_grads = tf.reduce_mean(reg_grads)
+        print('grads = ', metric_reg_grads)
         # Apply the gradients
         self.optimizer.apply_gradients(zip(grads, vars))
+        print('regloss after apply : ', regularization_loss_cn)
 
-        return {'CN activity' : avg_act_cn, 'avg activity' : avg_act_nocn, 'reg_loss' : regularization_loss}
+        return {'CN activity' : self.metrics[0].result(),
+                'avg activity' : self.metrics[1].result(),
+                'CN reg_loss' : regularization_loss_cn}
+                # 'Leg grads' : metric_leg_grads,
+                # 'Reg grads' : metric_reg_grads}
+
+        #return {m.name: m.result() for m in self.metrics}
