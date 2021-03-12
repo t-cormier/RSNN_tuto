@@ -71,7 +71,7 @@ def shift_by_one_time_step(tensor, initializer=None):
 
 ######### Create Dataset for Experiment###############
 def create_data_set(seq_len, n_input, itr=20, n_batch=1):
-    x = tf.random.uniform(shape=(seq_len, n_input))[None] * 0.5
+    x = tf.random.uniform(shape=(seq_len, n_input))[None] * 0.25
     y = tf.zeros(shape=(1, seq_len, 1))
     return tf.data.Dataset.from_tensor_slices((x, y)).repeat(count=itr).batch(n_batch)
 
@@ -210,9 +210,9 @@ def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
     return d #shape=(1,1000)
 
 
-def reg_loss(z, cn_idx, target_rate=0.08):
+def reg_loss(z, cn_idx, target_rate=0.01):
     av = tf.reduce_mean(z, axis=(0, 1))
-    print('\ncn_av regloss', av[cn_idx])
+    print('\nCN average activity as implemented', av[cn_idx])
     average_firing_rate_error = target_rate - av[cn_idx]
     regularization_loss = tf.maximum(average_firing_rate_error, 0)
     return regularization_loss
@@ -234,13 +234,19 @@ class Activity_metric(tf.keras.metrics.Metric):
             self.avg_act = tf.reduce_mean(avg_activity)
         else :
             self.avg_act_cn = avg_activity[self.cn_idx]
-            assert self.avg_act_cn > 0, "Conditioned neuron has no spontaneous activity"
+            #assert self.avg_act_cn > 0, "Conditioned neuron has no spontaneous activity"
 
     def result(self):
         if self.cn_idx == None :
             return self.avg_act
         else :
             return self.avg_act_cn
+
+    def reset_states(self):
+        if self.cn_idx == None :
+            self.avg_act = 0.
+        else :
+            self.avg_act_cn = 0.
 
 
 
@@ -278,8 +284,8 @@ class Leg_fit(keras.Model):
         with tf.GradientTape() as tape :
             v, z = self.model(x)
             regularization_loss_cn = reg_loss(z, self.cn)
-            print('regloss after model : ', regularization_loss_cn)
 
+        self.compiled_metrics.reset_states()
         self.compiled_metrics.update_state(y, z)
 
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
@@ -289,20 +295,20 @@ class Leg_fit(keras.Model):
         etrace = compute_etrace(self.model, v, z)
         leg_grads = tf.reduce_sum(d[:, :, None, None] * etrace, axis=(0, 1), name='leg_grads')
         reg_grads = tape.gradient(regularization_loss_cn, vars)
-        print('regloss after tape : ', regularization_loss_cn)
+        print('CN regularization loss as implemented: ', regularization_loss_cn)
         grads = reg_grads # + leg_grads
-        
+
         # show the gradients as Metrics
         metric_leg_grads = tf.reduce_mean(leg_grads)
-        metric_reg_grads = tf.reduce_mean(reg_grads)
+        metric_reg_grads = tf.reduce_mean(tf.math.abs(reg_grads))
         print('grads = ', metric_reg_grads)
         # Apply the gradients
         self.optimizer.apply_gradients(zip(grads, vars))
-        print('regloss after apply : ', regularization_loss_cn)
 
-        return {'CN activity' : self.metrics[0].result(),
-                'avg activity' : self.metrics[1].result(),
-                'CN reg_loss' : regularization_loss_cn}
+
+        return {'CN average activity ' : self.metrics[0].result(),
+                'CN regularization loss ' : regularization_loss_cn,
+                'average network ativity' : self.metrics[1].result()}
                 # 'Leg grads' : metric_leg_grads,
                 # 'Reg grads' : metric_reg_grads}
 
