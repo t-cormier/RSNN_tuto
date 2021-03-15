@@ -34,10 +34,9 @@ batch_size = 700 # time lapse between gradient applying (and length of eligibili
 
 
 ####### search loop ############
-for target_rate in cn_target_rate :
-    for idx in range(num_sim) :
+for idx in range(num_sim) :
 
-    print(f'Target rate : {target_rate}; sim number {idx}')
+    print(f'Sim number {idx}')
 
     ######## Init experiment ###########
     seq_len = 1000 * time_sec
