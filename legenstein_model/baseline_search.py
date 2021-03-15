@@ -13,11 +13,7 @@ physical_devices = tf.config.list_physical_devices("GPU")
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 
-class EarlyStopCNActivity(Callback):
 
-        def on_batch_end(self, batch, logs={}):
-            if logs.get('CN activity') == 0.0 and batch >= 20 :
-                 self.model.stop_training = True
 
 
 
@@ -57,7 +53,7 @@ for target_rate in cn_target_rate :
                                                   write_graph=False,
                                                   update_freq='batch')
 
-    earlystop_callback = EarlyStopCNActivity()
+    earlystop_callback = m.EarlyStopCNActivity()
 
     ######### Train #####################
     leg = m.Leg_fit(exp_model, cn_idx, target_rate=target_rate)
@@ -66,7 +62,7 @@ for target_rate in cn_target_rate :
     opt = keras.optimizers.Adam(lr=1e-3)
     leg.compile(optimizer = opt, metrics=[cn_activity, activity])
     print('Model ready for training')
-    leg.fit(dataset, epochs=epochs, callbacks=[tb_callbacks, EarlyStopCNActivity])
+    leg.fit(dataset, epochs=epochs, callbacks=[tb_callbacks, earlystop_callback])
     print('Model trained')
 
     ######### save the exp_model ########

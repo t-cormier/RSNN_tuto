@@ -258,6 +258,18 @@ class Activity_metric(tf.keras.metrics.Metric):
 
 
 
+
+
+
+############ Callbacks ####################
+class EarlyStopCNActivity(tf.keras.callbacks.Callback):
+
+        def on_batch_end(self, batch, logs={}):
+            if logs.get('CN activity') == 0.0 and batch >= 20 :
+                 self.model.stop_training = True
+
+
+
 ############ Experiment model ##############
 class Exp_model(keras.Model):
     """__init__ and passforward (__call__) of the model of the experiment"""
