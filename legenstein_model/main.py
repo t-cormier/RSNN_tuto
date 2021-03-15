@@ -19,7 +19,7 @@ n_input=20
 n_recurrent=100
 cn_idx = 10
 epochs = 1
-batch_size = 1500 # time lapse between gradient applying (and length of eligibility trace)
+batch_size = 100 # time lapse between gradient applying (and length of eligibility trace)
 
 
 ######## Init experiment ###########
