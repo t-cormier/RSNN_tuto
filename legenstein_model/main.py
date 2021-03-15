@@ -24,7 +24,7 @@ num_itr = 200
 ######## Init experiment ###########
 seq_len = 1000 * time_sec
 exp_model = m.Exp_model(n_recurrent, n_input, seq_len)
-dataset = m.create_data_set(seq_len, n_input, itr = num_itr)
+dataset = m.create_data_set(seq_len, n_input)
 print('Dataset created')
 
 
