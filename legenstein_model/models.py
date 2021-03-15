@@ -177,11 +177,14 @@ def compute_avg_activity(model, z):
 
 
 def compute_etrace(model, v, z):
+
     v_scaled = tf.identity((v - model.cell.threshold) / model.cell.threshold, name='v_scaled')
     post_term = tf.identity(pseudo_derivative(v_scaled, model.cell._dampening_factor) / model.cell.threshold,name='psi')
     z_previous_time = shift_by_one_time_step(z)
 
+
     pre_term_w_rec = tf.identity(exp_convolve(z_previous_time, decay=model.cell._decay), name = 'z_bar')
+
 
     # Eligibility traces                                 # adding None as a dimension grants the right product
     eligibility_traces_w_rec = tf.identity(post_term[:, :, None, :] * pre_term_w_rec[:, :, :, None], name='etrace_rec')
@@ -267,7 +270,7 @@ class Exp_model(keras.Model):
 
     def __call__(self, inputs):
         voltages, refr, spikes = self.rnn(inputs, initial_state=self.init_state)
-        self.init_state =  (voltages, refr, spikes)
+        self.init_state =  (voltages[:, -1, :], refr[:, -1, :], spikes[:, -1, :])
 
         return [voltages, spikes]
 
@@ -285,33 +288,29 @@ class Leg_fit(keras.Model):
 
     def train_step(self, data):
         x, y = data
-        print(x)
         with tf.GradientTape() as tape :
             v, z = self.model(x)
             regularization_loss_cn = reg_loss(z, self.cn)
-        print('model_computed')
+
         #self.metrics.reset_states()
         self.compiled_metrics.update_state(y, z)
-        print('metric updated')
+
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
         vars = self.model.trainable_variables
 
         d = compute_dopamine(self.cn, z)
-        print('1')
         etrace = compute_etrace(self.model, v, z)
-        print('2')
         leg_grads = tf.reduce_sum(d[:, :, None, None] * etrace, axis=(0, 1), name='leg_grads')
-        print("3")
         reg_grads = tape.gradient(regularization_loss_cn, vars)
-        print("4")
         grads = reg_grads # + leg_grads
-        print('gradients computed')
+
         # show the gradients as Metrics
         metric_leg_grads = tf.reduce_mean(leg_grads)
         metric_reg_grads = tf.reduce_mean(tf.math.abs(reg_grads))
+        
         # Apply the gradients
         self.optimizer.apply_gradients(zip(grads, vars))
-        print('gradient applied')
+
         return {'CN average activity ' : self.metrics[0].result(),
                 'CN regularization loss ' : regularization_loss_cn,
                 'average network ativity' : self.metrics[1].result()}
