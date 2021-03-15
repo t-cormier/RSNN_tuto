@@ -141,6 +141,8 @@ class LIFCell(layers.Layer):
         old_r = state[1]
         old_z = state[2]
 
+
+
         no_autapse_w_rec = tf.where(self.disconnect_mask, tf.zeros_like(self.recurrent_weights), self.recurrent_weights)
 
         i_in = tf.matmul(inputs, self.input_weights, name='I_in')
@@ -157,6 +159,7 @@ class LIFCell(layers.Layer):
         v_scaled = (new_v - self.threshold) / self.threshold
         new_z = spike_function(v_scaled, self._dampening_factor)
         new_z = tf.where(is_refractory, tf.zeros_like(new_z), new_z)
+
         new_r = tf.clip_by_value(
             old_r - 1 + tf.cast(new_z * self._n_refractory, tf.int32),
             0,
@@ -269,12 +272,6 @@ class Activity_metric(tf.keras.metrics.Metric):
 
 
 
-############ Callbacks ####################
-class EarlyStopCNActivity(tf.keras.callbacks.Callback):
-
-        def on_batch_end(self, batch, logs={}):
-            if logs.get('CN activity') == 0.0 and batch >= 20 :
-                 self.model.stop_training = True
 
 
 
@@ -290,7 +287,8 @@ class Exp_model(keras.Model):
         self.init_refrac = tf.Variable(self.cell.zero_state()[1], trainable=False, name='init_refractory')
         self.init_spike = tf.Variable(self.cell.zero_state()[2], trainable=False, name='init_spike')
 
-    def __call__(self, inputs):
+
+    def call(self, inputs):
         init_state = (self.init_volt.value(), self.init_refrac.value(), self.init_spike.value())
         outputs, s_volt, s_refr, s_spike = self.rnn(inputs, initial_state=init_state)
         voltages, _, spikes = outputs
