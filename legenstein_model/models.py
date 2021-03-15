@@ -218,7 +218,7 @@ def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
     return d #shape=(1,1000)
 
 
-def reg_loss(z, cn_idx, target_rate=0.01):
+def reg_loss(z, cn_idx, target_rate=0.05):
     av = tf.reduce_mean(z, axis=(0, 1))
     average_firing_rate_error = target_rate - av[cn_idx]
     regularization_loss = tf.maximum(average_firing_rate_error, 0)
@@ -307,13 +307,13 @@ class Leg_fit(keras.Model):
         # show the gradients as Metrics
         metric_leg_grads = tf.reduce_mean(leg_grads)
         metric_reg_grads = tf.reduce_mean(tf.math.abs(reg_grads))
-        
+
         # Apply the gradients
         self.optimizer.apply_gradients(zip(grads, vars))
 
         return {'CN average activity ' : self.metrics[0].result(),
                 'CN regularization loss ' : regularization_loss_cn,
-                'average network ativity' : self.metrics[1].result()}
+                'average network activity' : self.metrics[1].result()}
                 # 'Leg grads' : metric_leg_grads,
                 # 'Reg grads' : metric_reg_grads}
 
