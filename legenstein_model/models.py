@@ -112,10 +112,11 @@ class LIFCell(layers.Layer):
         #                  voltage, refractory, previous spikes
         self.state_size = (units, units, units)
 
+
     def zero_state(self, dtype=tf.float32):
         v0 = tf.zeros((1, self.units), dtype)
         r0 = tf.zeros((1, self.units), tf.int32)
-        z_buf0 = tf.zeros((1, self.units), tf.float32)
+        z_buf0 = tf.zeros((1, self.units), dtype)
         return v0, r0, z_buf0
 
     def build(self, input_shape):
@@ -140,6 +141,8 @@ class LIFCell(layers.Layer):
         old_r = state[1]
         old_z = state[2]
 
+
+
         no_autapse_w_rec = tf.where(self.disconnect_mask, tf.zeros_like(self.recurrent_weights), self.recurrent_weights)
 
         i_in = tf.matmul(inputs, self.input_weights, name='I_in')
@@ -156,6 +159,7 @@ class LIFCell(layers.Layer):
         v_scaled = (new_v - self.threshold) / self.threshold
         new_z = spike_function(v_scaled, self._dampening_factor)
         new_z = tf.where(is_refractory, tf.zeros_like(new_z), new_z)
+
         new_r = tf.clip_by_value(
             old_r - 1 + tf.cast(new_z * self._n_refractory, tf.int32),
             0,
@@ -194,14 +198,12 @@ def compute_etrace(model, v, z):
     return eligibility_traces_convolved_w_rec #shape=(None, 1000, 100, 100)
 
 
-def reward_kernel(time, A_p=1.379, A_m=0.27, tau_p=0.2, tau_m=1., scale=500):
-    t = time / scale # very important hyper parameter in order to make the dopamine model work
-    kernel_p = A_p * t / tau_p * np.exp(1 - t / tau_p)
-    kernel_m = A_m * t / tau_m * np.exp(1 - t / tau_m)
-    return kernel_p - kernel_m
 
 
-def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
+
+
+
+def compute_dopamine(idx_cn, z):
     # switch to time major
     shp = z.get_shape()
     seq_len = shp[1]
@@ -210,12 +212,21 @@ def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
     z_time_major = tf.transpose(z, perm=transpose_perm)
     z_time_major = tf.cast(z_time_major, dtype=tf.float32)
 
-    def xi_r(t):
-        return tf.constant([r_kernel(i) for i in range(t)], shape=(t,1), dtype=tf.float32)
+    def reward(time, A_p=1.379, A_m=0.27, tau_p=0.2, tau_m=1., scale=500):
+        t = time / scale # very important hyper parameter in order to make the dopamine model work
+        kernel_p = A_p * t / tau_p * np.exp(1 - t / tau_p)
+        kernel_m = A_m * t / tau_m * np.exp(1 - t / tau_m)
+        return kernel_p - kernel_m
 
-    d = tf.constant([tf.reduce_sum(xi_r(t) * z_time_major[t:0:-1, :, idx_cn]).numpy() for t in range(seq_len)], shape=(1,seq_len), dtype=tf.float32)
+    r_k = tf.stack([reward(t) for t in range(seq_len,0,-1)])
+    z_cn = z_time_major[:, :, idx_cn]
 
-    return d #shape=(1,1000)
+    z_cn = tf.reshape(z_cn, [1, int(z_cn.shape[0]), 1], name='z_rev')
+    r_k = tf.reshape(r_k, [int(r_k.shape[0]), 1, 1], name='reward_kernel')
+
+    dopa = tf.nn.conv1d(z_cn, r_k, stride=1, padding='SAME')
+
+    return dopa #shape=(1,1000)
 
 
 def reg_loss(z, cn_idx, target_rate):
@@ -261,12 +272,6 @@ class Activity_metric(tf.keras.metrics.Metric):
 
 
 
-############ Callbacks ####################
-class EarlyStopCNActivity(tf.keras.callbacks.Callback):
-
-        def on_batch_end(self, batch, logs={}):
-            if logs.get('CN activity') == 0.0 and batch >= 20 :
-                 self.model.stop_training = True
 
 
 
@@ -277,12 +282,19 @@ class Exp_model(keras.Model):
     def __init__(self, n_recurrent, n_input, seq_len, batch_size):
         super(Exp_model, self).__init__()
         self.cell = LIFCell(n_recurrent)
-        self.rnn = layers.RNN(self.cell, return_sequences=True)
-        self.init_state = self.cell.zero_state()
+        self.rnn = layers.RNN(self.cell, return_sequences=True, return_state=True)
+        self.init_volt = tf.Variable(self.cell.zero_state()[0], trainable=False, name='init_voltage')
+        self.init_refrac = tf.Variable(self.cell.zero_state()[1], trainable=False, name='init_refractory')
+        self.init_spike = tf.Variable(self.cell.zero_state()[2], trainable=False, name='init_spike')
 
-    def __call__(self, inputs):
-        voltages, refr, spikes = self.rnn(inputs, initial_state=self.init_state)
-        self.init_state =  (voltages[:, -1, :], refr[:, -1, :], spikes[:, -1, :])
+
+    def call(self, inputs):
+        init_state = (self.init_volt.value(), self.init_refrac.value(), self.init_spike.value())
+        outputs, s_volt, s_refr, s_spike = self.rnn(inputs, initial_state=init_state)
+        voltages, _, spikes = outputs
+        self.init_volt.assign(s_volt)
+        self.init_refrac.assign(s_refr)
+        self.init_spike.assign(s_spike)
 
         return [voltages, spikes]
 
@@ -291,12 +303,13 @@ class Exp_model(keras.Model):
 class Leg_fit(keras.Model):
     """Custom model.fit for (Legenstein and al., 2008) learning rule"""
 
-    def __init__(self, model, cn_idx, target_rate=0.005):
+    def __init__(self, model, cn_idx, target_rate=0.0001):
         super(Leg_fit, self).__init__()
         self.model = model
         assert cn_idx in np.arange(self.model.cell.units)
         self.cn = cn_idx
         self.target_rate = target_rate
+        self.stop_training = False
 
 
     def train_step(self, data):
@@ -311,9 +324,10 @@ class Leg_fit(keras.Model):
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
         vars = self.model.trainable_variables
 
-        d = compute_dopamine(self.cn, z)
+        dopa = compute_dopamine(self.cn, z)
+
         etrace = compute_etrace(self.model, v, z)
-        leg_grads = tf.reduce_sum(d[:, :, None, None] * etrace, axis=(0, 1), name='leg_grads')
+        leg_grads = tf.reduce_sum(dopa[:, :, None, None] * etrace, axis=(0, 1), name='leg_grads')
         reg_grads = tape.gradient(regularization_loss_cn, vars)
         grads = reg_grads # + leg_grads
 
