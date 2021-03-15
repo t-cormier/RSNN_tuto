@@ -9,12 +9,12 @@ import matplotlib.pyplot as plt
 import models as m
 
 #tf.config.experimental_run_functions_eagerly(True)
-physical_devices = tf.config.list_physical_devices("GPU")
-tf.config.experimental.set_memory_growth(physical_devices[0], True)
+#physical_devices = tf.config.list_physical_devices("GPU")
+#tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 
 ######## Constants #######
-time_sec = 100
+time_sec = 1000
 n_input=20
 n_recurrent=100
 cn_idx = 10

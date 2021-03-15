@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 
 import models as m
 
-tf.config.experimental_run_functions_eagerly(True)
 physical_devices = tf.config.list_physical_devices("GPU")
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
@@ -20,7 +19,7 @@ tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 ######## Hyperparameters ########
 
-cn_target_rate = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006]
+cn_target_rate = 0.001
 num_sim = 10
 
 
@@ -47,7 +46,7 @@ for idx in range(num_sim) :
 
 
     ####### Tensorboard callback #########
-    tb_callbacks = tf.keras.callbacks.TensorBoard(log_dir = f'baseline_logs/logs_{target_rate}_{idx}',
+    tb_callbacks = tf.keras.callbacks.TensorBoard(log_dir = f'baseline_logs/logs_{idx}',
                                                   histogram_freq=0,
                                                   write_graph=False,
                                                   update_freq='batch')
@@ -55,7 +54,7 @@ for idx in range(num_sim) :
     earlystop_callback = m.EarlyStopCNActivity()
 
     ######### Train #####################
-    leg = m.Leg_fit(exp_model, cn_idx, target_rate=target_rate)
+    leg = m.Leg_fit(exp_model, cn_idx)
     cn_activity = m.Activity_metric(cn_idx, name='CN activity')
     activity = m.Activity_metric(name='avg activity')
     opt = keras.optimizers.Adam(lr=1e-3)
@@ -65,4 +64,4 @@ for idx in range(num_sim) :
     print('Model trained')
 
     ######### save the exp_model ########
-    exp_model.save(f'baseline_models/mod_{target_rate}_{idx}/')
+    exp_model.save(f'baseline_models/mod_{idx}/')
