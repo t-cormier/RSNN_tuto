@@ -69,6 +69,15 @@ def shift_by_one_time_step(tensor, initializer=None):
 
 
 
+######### Create Dataset for Experiment###############
+def create_data_set(seq_len, n_input, batch_size=700):
+    n_batch = seq_len // batch_size
+    x = tf.random.uniform(shape=(n_batch, batch_size, n_input)) * 0.25
+    y = tf.zeros(shape=(n_batch, batch_size, 1))
+    dataset = tf.data.Dataset.from_tensor_slices((x, y)).batch(1)
+    return dataset
+
+
 
 ####### Layer definition #########
 class CellConstraint(keras.constraints.Constraint):
@@ -87,17 +96,14 @@ class CellConstraint(keras.constraints.Constraint):
 class LIFCell(layers.Layer):
     """RSNN model for the Experiemnt (LIF)"""
 
-    def __init__(self, units, connectivity=0.2, ei_ratio=0.2, tau=20., tau_readout=30., thr=1., dt=1, n_refractory=5, dampening_factor=.3):
+    def __init__(self, units, tau=20., tau_readout=50., thr=1., dt=1, n_refractory=5, dampening_factor=.3):
         super().__init__()
         self.units = units
-        self.n_exc = int(self.units * ei_ratio)
-        self.n_inh = self.units - self.n_exc
 
         self._dt = float(dt)
         self._decay = tf.exp(-dt / tau)
         self._readout_decay = tf.exp(-dt / tau_readout)
         self._n_refractory = n_refractory
-        self._connect = connectivity
 
 
         self.threshold = thr
@@ -106,10 +112,10 @@ class LIFCell(layers.Layer):
         #                  voltage, refractory, previous spikes
         self.state_size = (units, units, units)
 
-    def zero_state(self, batch_size, dtype=tf.float32):
-        v0 = tf.zeros((batch_size, self.units), dtype)
-        r0 = tf.zeros((batch_size, self.units), tf.int32)
-        z_buf0 = tf.zeros((batch_size, self.units), tf.float32)
+    def zero_state(self, dtype=tf.float32):
+        v0 = tf.zeros((1, self.units), dtype)
+        r0 = tf.zeros((1, self.units), tf.int32)
+        z_buf0 = tf.zeros((1, self.units), tf.float32)
         return v0, r0, z_buf0
 
     def build(self, input_shape):
@@ -117,23 +123,16 @@ class LIFCell(layers.Layer):
         self.input_weights = self.add_weight(shape=(input_shape[-1], self.units),
                                              initializer=tf.keras.initializers.RandomNormal(
                                                  stddev=1. / np.sqrt(input_shape[-1] + self.units)),
+                                             trainable=False,
                                              name='input_weights')
 
         self.recurrent_weights = self.add_weight(shape=(self.units, self.units),
                                                  initializer=tf.keras.initializers.Orthogonal(gain=.7),
                                                  name='recurrent_weights')
 
-        # Masks
-        self.disconnect_mask = tf.cast(np.diag(np.ones(self.units, dtype=np.bool)), tf.bool)
-        nump_connectivity_mat = (np.random.uniform(size=(self.units, self.units)) < self._connect)
-        self.connectivity_mask = tf.cast(nump_connectivity_mat, tf.bool)
-        nump_EI_mat = np.concatenate((np.ones((self.units, self.n_exc), dtype=np.bool),
-                                     np.zeros((self.units, self.n_inh), dtype=np.bool)),
-                                     axis=1)
-        self.EI_mask = tf.cast(nump_EI_mat, tf.bool)
 
-        # Constraint
-        self.constraint = CellConstraint(self.connectivity_mask, self.EI_mask, self.disconnect_mask)
+        self.disconnect_mask = tf.cast(np.diag(np.ones(self.units, dtype=np.bool)), tf.bool)
+
         super().build(input_shape)
 
     def call(self, inputs, state):
@@ -141,14 +140,17 @@ class LIFCell(layers.Layer):
         old_r = state[1]
         old_z = state[2]
 
-        corrected_w = self.constraint(self.recurrent_weights)
+        no_autapse_w_rec = tf.where(self.disconnect_mask, tf.zeros_like(self.recurrent_weights), self.recurrent_weights)
 
-        i_in = tf.matmul(inputs, self.input_weights)
-        i_rec = tf.matmul(old_z, corrected_w)
+        i_in = tf.matmul(inputs, self.input_weights, name='I_in')
+
+        i_rec = tf.matmul(old_z, no_autapse_w_rec, name='I_rec')
         i_reset = -self.threshold * old_z
         input_current = i_in + i_rec + i_reset
 
+
         new_v = self._decay * old_v + input_current
+
 
         is_refractory = tf.greater(old_r, 0)
         v_scaled = (new_v - self.threshold) / self.threshold
@@ -159,10 +161,8 @@ class LIFCell(layers.Layer):
             0,
             self._n_refractory)
 
-
-
         new_state = (new_v, new_r, new_z)
-        output = (new_v, new_z)
+        output = (new_v, new_r, new_z)
 
         return output, new_state #v,r,z
 
@@ -170,46 +170,45 @@ class LIFCell(layers.Layer):
 
 
 ############# Metrics and gradients ################
-def compute_cn_activity(model, z, idx_cn):
-    z_cn = z[:,:,idx_cn]
-    z_cn_convolved = exp_convolve(z_cn)
-    return z_cn_convolved  #shape=(1,1000)
 
-
-def compute_avg_activity(arg):
-    z_convolved = exp_convolve(z)
-    return tf.reduce_mean(z_convolved, axis=2) # shape=(1,1000)
+def compute_avg_activity(model, z):
+    av = tf.reduce_mean(z, axis=(0, 1))
+    return av # shape=(1,100)
 
 
 def compute_etrace(model, v, z):
+
     v_scaled = tf.identity((v - model.cell.threshold) / model.cell.threshold, name='v_scaled')
     post_term = tf.identity(pseudo_derivative(v_scaled, model.cell._dampening_factor) / model.cell.threshold,name='psi')
     z_previous_time = shift_by_one_time_step(z)
 
+
     pre_term_w_rec = tf.identity(exp_convolve(z_previous_time, decay=model.cell._decay), name = 'z_bar')
 
-    # Eligibility traces
+
+    # Eligibility traces                                 # adding None as a dimension grants the right product
     eligibility_traces_w_rec = tf.identity(post_term[:, :, None, :] * pre_term_w_rec[:, :, :, None], name='etrace_rec')
     eligibility_traces_convolved_w_rec = tf.identity(exp_convolve(eligibility_traces_w_rec), name='fetrace_rec')
 
     # Warning : Only LTP implemented here
-    return eligibility_traces_convolved_w_rec
+    return eligibility_traces_convolved_w_rec #shape=(None, 1000, 100, 100)
 
 
-def reward_kernel(time, A_p=1.379, A_m=0.27, tau_p=0.2, tau_m=1.):
-    t = time/250 # very important hyper parameter in order to make the dopamine model work
+def reward_kernel(time, A_p=1.379, A_m=0.27, tau_p=0.2, tau_m=1., scale=500):
+    t = time / scale # very important hyper parameter in order to make the dopamine model work
     kernel_p = A_p * t / tau_p * np.exp(1 - t / tau_p)
     kernel_m = A_m * t / tau_m * np.exp(1 - t / tau_m)
     return kernel_p - kernel_m
 
 
-def compute_dopamine(z, idx_cn, r_kernel=reward_kernel):
+def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
     # switch to time major
     shp = z.get_shape()
     seq_len = shp[1]
     r_shp = range(len(shp))
     transpose_perm = [1, 0] + list(r_shp)[2:]
     z_time_major = tf.transpose(z, perm=transpose_perm)
+    z_time_major = tf.cast(z_time_major, dtype=tf.float32)
 
     def xi_r(t):
         return tf.constant([r_kernel(i) for i in range(t)], shape=(t,1), dtype=tf.float32)
@@ -218,11 +217,56 @@ def compute_dopamine(z, idx_cn, r_kernel=reward_kernel):
 
     return d #shape=(1,1000)
 
-def compute_leg_gradients(d, etrace):
-    pass
+
+def reg_loss(z, cn_idx, target_rate):
+    av = tf.reduce_mean(z, axis=(0, 1))
+    average_firing_rate_error = target_rate - av[cn_idx]
+    regularization_loss = tf.maximum(average_firing_rate_error, 0)
+    return regularization_loss
+
+
+############### metrics ###################
+class Activity_metric(tf.keras.metrics.Metric):
+    """ Activity metrics for the conditioned neuron and the whole network """
+    def __init__(self, cn_idx=None, name="activity_metric", **kwargs):
+        super(Activity_metric, self).__init__(name=name, **kwargs)
+        self.cn_idx = cn_idx
+        self.avg_act = None
+        self.avg_act_cn = None
+
+
+    def update_state(self, y_true, z_pred, sample_weight=None):
+        avg_activity = tf.reduce_mean(z_pred, axis=(0, 1))
+        if self.cn_idx == None :
+            self.avg_act = tf.reduce_mean(avg_activity)
+        else :
+            self.avg_act_cn = avg_activity[self.cn_idx]
+            #assert self.avg_act_cn > 0, "Conditioned neuron has no spontaneous activity"
+
+    def result(self):
+        if self.cn_idx == None :
+            return self.avg_act
+        else :
+            return self.avg_act_cn
+
+    def reset_states(self):
+        if self.cn_idx == None :
+            self.avg_act = 0.
+        else :
+            self.avg_act_cn = 0.
 
 
 
+
+
+
+
+############ Callbacks ####################
+class EarlyStopCNActivity(tf.keras.callbacks.Callback):
+
+        def on_batch_end(self, batch, logs={}):
+            if logs.get('CN activity') == 0.0 and batch >= 20 :
+                 self.model.stop_training = True
 
 
 
@@ -230,15 +274,15 @@ def compute_leg_gradients(d, etrace):
 class Exp_model(keras.Model):
     """__init__ and passforward (__call__) of the model of the experiment"""
 
-    def __init__(self, n_recurrent, n_input, seq_len):
+    def __init__(self, n_recurrent, n_input, seq_len, batch_size):
         super(Exp_model, self).__init__()
         self.cell = LIFCell(n_recurrent)
         self.rnn = layers.RNN(self.cell, return_sequences=True)
+        self.init_state = self.cell.zero_state()
 
     def __call__(self, inputs):
-        batch_size = tf.shape(inputs)[0]
-        initial_state = self.cell.zero_state(batch_size)
-        voltages, spikes = self.rnn(inputs, initial_state=initial_state)
+        voltages, refr, spikes = self.rnn(inputs, initial_state=self.init_state)
+        self.init_state =  (voltages[:, -1, :], refr[:, -1, :], spikes[:, -1, :])
 
         return [voltages, spikes]
 
@@ -247,29 +291,43 @@ class Exp_model(keras.Model):
 class Leg_fit(keras.Model):
     """Custom model.fit for (Legenstein and al., 2008) learning rule"""
 
-    def __init__(self, model, cn_idx):
+    def __init__(self, model, cn_idx, target_rate=0.005):
         super(Leg_fit, self).__init__()
         self.model = model
         assert cn_idx in np.arange(self.model.cell.units)
         self.cn = cn_idx
+        self.target_rate = target_rate
+
 
     def train_step(self, data):
         x, y = data
+        with tf.GradientTape() as tape :
+            v, z = self.model(x)
+            regularization_loss_cn = reg_loss(z, self.cn, target_rate=self.target_rate)
 
-        v, z = self.model(x)
-
-        # compute the metric (here it is the activity of the conditioned neuron)
-        metric_cn_act = compute_cn_activity(self.model, self.cn, z)
-        metric_avg_act = compute_avg_activity(z)
+        #self.metrics.reset_states()
+        self.compiled_metrics.update_state(y, z)
 
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
-        d = compute_dopamine(self.cn, z)
-        etrace = compute_etrace(self.model, v, z)
-
-        grads = compute_leg_gradients(d, etrace)
         vars = self.model.trainable_variables
 
-        # Apply the gradients
-        self.optimizer.apply_gradients(zip(vars, grads))
+        d = compute_dopamine(self.cn, z)
+        etrace = compute_etrace(self.model, v, z)
+        leg_grads = tf.reduce_sum(d[:, :, None, None] * etrace, axis=(0, 1), name='leg_grads')
+        reg_grads = tape.gradient(regularization_loss_cn, vars)
+        grads = reg_grads # + leg_grads
 
-        return {'CN activity' : metric_cn_act, 'avg activity' : metric_avg_act}
+        # show the gradients as Metrics
+        metric_leg_grads = tf.reduce_mean(leg_grads)
+        metric_reg_grads = tf.reduce_mean(tf.math.abs(reg_grads))
+
+        # Apply the gradients
+        self.optimizer.apply_gradients(zip(grads, vars))
+
+        return {'CN average activity' : self.metrics[0].result(),
+                'CN regularization loss' : regularization_loss_cn,
+                'average network activity' : self.metrics[1].result()}
+                # 'Leg grads' : metric_leg_grads,
+                # 'Reg grads' : metric_reg_grads}
+
+        #return {m.name: m.result() for m in self.metrics}
