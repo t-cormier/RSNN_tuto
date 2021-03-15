@@ -218,11 +218,10 @@ def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
     return d #shape=(1,1000)
 
 
-def reg_loss(z, cn_idx, target_rate=0.005):
+def reg_loss(z, cn_idx, target_rate):
     av = tf.reduce_mean(z, axis=(0, 1))
-    gain = 1
     average_firing_rate_error = target_rate - av[cn_idx]
-    regularization_loss = gain * tf.maximum(average_firing_rate_error, 0)
+    regularization_loss = tf.maximum(average_firing_rate_error, 0)
     return regularization_loss
 
 
@@ -280,18 +279,19 @@ class Exp_model(keras.Model):
 class Leg_fit(keras.Model):
     """Custom model.fit for (Legenstein and al., 2008) learning rule"""
 
-    def __init__(self, model, cn_idx):
+    def __init__(self, model, cn_idx, target_rate=0.005):
         super(Leg_fit, self).__init__()
         self.model = model
         assert cn_idx in np.arange(self.model.cell.units)
         self.cn = cn_idx
+        self.target_rate = target_rate
 
 
     def train_step(self, data):
         x, y = data
         with tf.GradientTape() as tape :
             v, z = self.model(x)
-            regularization_loss_cn = reg_loss(z, self.cn)
+            regularization_loss_cn = reg_loss(z, self.cn, target_rate=self.target_rate)
 
         #self.metrics.reset_states()
         self.compiled_metrics.update_state(y, z)
@@ -312,8 +312,8 @@ class Leg_fit(keras.Model):
         # Apply the gradients
         self.optimizer.apply_gradients(zip(grads, vars))
 
-        return {'CN average activity ' : self.metrics[0].result(),
-                'CN regularization loss ' : regularization_loss_cn,
+        return {'CN average activity' : self.metrics[0].result(),
+                'CN regularization loss' : regularization_loss_cn,
                 'average network activity' : self.metrics[1].result()}
                 # 'Leg grads' : metric_leg_grads,
                 # 'Reg grads' : metric_reg_grads}
