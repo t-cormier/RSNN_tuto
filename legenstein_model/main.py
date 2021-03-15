@@ -25,6 +25,7 @@ num_itr = 200
 seq_len = 1000 * time_sec
 exp_model = m.Exp_model(n_recurrent, n_input, seq_len)
 dataset = m.create_data_set(seq_len, n_input, itr = num_itr)
+print('Dataset created')
 
 
 ####### Tensorboard callback #########
@@ -39,5 +40,6 @@ cn_activity = m.Activity_metric(cn_idx, name='CN activity')
 activity = m.Activity_metric(name='avg activity')
 opt = keras.optimizers.Adam(lr=1e-3)
 leg.compile(optimizer = opt, metrics=[cn_activity, activity])
-
+print('model ready for training')
 leg.fit(dataset, epochs=epochs, callbacks=[tb_callbacks])
+pritn('Model trained')

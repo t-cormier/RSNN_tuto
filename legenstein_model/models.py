@@ -73,7 +73,8 @@ def shift_by_one_time_step(tensor, initializer=None):
 def create_data_set(seq_len, n_input, itr=1, n_batch=100):
     x = tf.random.uniform(shape=(seq_len, n_input))[None] * 0.25
     y = tf.zeros(shape=(1,seq_len, 1))
-    return tf.data.Dataset.from_tensor_slices((x, y)).repeat(count=itr).batch(n_batch)
+    dataset = tf.data.Dataset.from_tensor_slices((x, y)).repeat(count=itr).batch(n_batch)
+    return dataset
 
 
 
@@ -286,7 +287,7 @@ class Leg_fit(keras.Model):
             regularization_loss_cn = reg_loss(z, self.cn)
 
         #self.metrics.reset_states()
-        self.metrics.update_state(y, z)
+        self.compiled_metrics.update_state(y, z)
 
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
         vars = self.model.trainable_variables
@@ -306,9 +307,9 @@ class Leg_fit(keras.Model):
         self.optimizer.apply_gradients(zip(grads, vars))
 
 
-        return {'CN average activity ' : self.metrics[0].result(),
+        return {'CN average activity ' : self.compiled_metrics[0].result(),
                 'CN regularization loss ' : regularization_loss_cn,
-                'average network ativity' : self.metrics[1].result()}
+                'average network ativity' : self.compiled_metrics[1].result()}
                 # 'Leg grads' : metric_leg_grads,
                 # 'Reg grads' : metric_reg_grads}
 
