@@ -70,10 +70,11 @@ def shift_by_one_time_step(tensor, initializer=None):
 
 
 ######### Create Dataset for Experiment###############
-def create_data_set(seq_len, n_input, itr=1, n_batch=100):
-    x = tf.random.uniform(shape=(seq_len, n_input))[None] * 0.25
-    y = tf.zeros(shape=(1,seq_len, 1))
-    dataset = tf.data.Dataset.from_tensor_slices((x, y)).repeat(count=itr).batch(n_batch)
+def create_data_set(seq_len, n_input, batch_size=700):
+    n_batch = seq_len // batch_size
+    x = tf.random.uniform(shape=(n_batch, batch_size, n_input)) * 0.25
+    y = tf.zeros(shape=(n_batch, batch_size, 1))
+    dataset = tf.data.Dataset.from_tensor_slices((x, y)).batch(1)
     return dataset
 
 
@@ -111,10 +112,10 @@ class LIFCell(layers.Layer):
         #                  voltage, refractory, previous spikes
         self.state_size = (units, units, units)
 
-    def zero_state(self, batch_size, dtype=tf.float32):
-        v0 = tf.zeros((batch_size, self.units), dtype)
-        r0 = tf.zeros((batch_size, self.units), tf.int32)
-        z_buf0 = tf.zeros((batch_size, self.units), tf.float32)
+    def zero_state(self, dtype=tf.float32):
+        v0 = tf.zeros((1, self.units), dtype)
+        r0 = tf.zeros((1, self.units), tf.int32)
+        z_buf0 = tf.zeros((1, self.units), tf.float32)
         return v0, r0, z_buf0
 
     def build(self, input_shape):
@@ -141,12 +142,15 @@ class LIFCell(layers.Layer):
 
         no_autapse_w_rec = tf.where(self.disconnect_mask, tf.zeros_like(self.recurrent_weights), self.recurrent_weights)
 
-        i_in = tf.matmul(inputs, self.input_weights)
-        i_rec = tf.matmul(old_z, no_autapse_w_rec)
+        i_in = tf.matmul(inputs, self.input_weights, name='I_in')
+
+        i_rec = tf.matmul(old_z, no_autapse_w_rec, name='I_rec')
         i_reset = -self.threshold * old_z
         input_current = i_in + i_rec + i_reset
 
+
         new_v = self._decay * old_v + input_current
+
 
         is_refractory = tf.greater(old_r, 0)
         v_scaled = (new_v - self.threshold) / self.threshold
@@ -158,7 +162,7 @@ class LIFCell(layers.Layer):
             self._n_refractory)
 
         new_state = (new_v, new_r, new_z)
-        output = (new_v, new_z)
+        output = (new_v, new_r, new_z)
 
         return output, new_state #v,r,z
 
@@ -213,7 +217,6 @@ def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
 
 def reg_loss(z, cn_idx, target_rate=0.01):
     av = tf.reduce_mean(z, axis=(0, 1))
-    print('\nCN average activity as implemented', av[cn_idx])
     average_firing_rate_error = target_rate - av[cn_idx]
     regularization_loss = tf.maximum(average_firing_rate_error, 0)
     return regularization_loss
@@ -256,15 +259,15 @@ class Activity_metric(tf.keras.metrics.Metric):
 class Exp_model(keras.Model):
     """__init__ and passforward (__call__) of the model of the experiment"""
 
-    def __init__(self, n_recurrent, n_input, seq_len):
+    def __init__(self, n_recurrent, n_input, seq_len, batch_size):
         super(Exp_model, self).__init__()
         self.cell = LIFCell(n_recurrent)
         self.rnn = layers.RNN(self.cell, return_sequences=True)
+        self.init_state = self.cell.zero_state()
 
     def __call__(self, inputs):
-        batch_size = tf.shape(inputs)[0]
-        initial_state = self.cell.zero_state(batch_size)
-        voltages, spikes = self.rnn(inputs, initial_state=initial_state)
+        voltages, refr, spikes = self.rnn(inputs, initial_state=self.init_state)
+        self.init_state =  (voltages, refr, spikes)
 
         return [voltages, spikes]
 
@@ -282,34 +285,36 @@ class Leg_fit(keras.Model):
 
     def train_step(self, data):
         x, y = data
+        print(x)
         with tf.GradientTape() as tape :
             v, z = self.model(x)
             regularization_loss_cn = reg_loss(z, self.cn)
-
+        print('model_computed')
         #self.metrics.reset_states()
         self.compiled_metrics.update_state(y, z)
-
+        print('metric updated')
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
         vars = self.model.trainable_variables
 
         d = compute_dopamine(self.cn, z)
+        print('1')
         etrace = compute_etrace(self.model, v, z)
+        print('2')
         leg_grads = tf.reduce_sum(d[:, :, None, None] * etrace, axis=(0, 1), name='leg_grads')
+        print("3")
         reg_grads = tape.gradient(regularization_loss_cn, vars)
-        print('CN regularization loss as implemented: ', regularization_loss_cn)
+        print("4")
         grads = reg_grads # + leg_grads
-
+        print('gradients computed')
         # show the gradients as Metrics
         metric_leg_grads = tf.reduce_mean(leg_grads)
         metric_reg_grads = tf.reduce_mean(tf.math.abs(reg_grads))
-        print('grads = ', metric_reg_grads)
         # Apply the gradients
         self.optimizer.apply_gradients(zip(grads, vars))
-
-
-        return {'CN average activity ' : self.compiled_metrics[0].result(),
+        print('gradient applied')
+        return {'CN average activity ' : self.metrics[0].result(),
                 'CN regularization loss ' : regularization_loss_cn,
-                'average network ativity' : self.compiled_metrics[1].result()}
+                'average network ativity' : self.metrics[1].result()}
                 # 'Leg grads' : metric_leg_grads,
                 # 'Reg grads' : metric_reg_grads}
 
