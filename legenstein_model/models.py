@@ -285,8 +285,8 @@ class Leg_fit(keras.Model):
             v, z = self.model(x)
             regularization_loss_cn = reg_loss(z, self.cn)
 
-        self.compiled_metrics.reset_states()
-        self.compiled_metrics.update_state(y, z)
+        self.metrics.reset_states()
+        self.metrics.update_state(y, z)
 
         # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
         vars = self.model.trainable_variables
