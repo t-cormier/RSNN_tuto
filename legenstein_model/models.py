@@ -71,8 +71,8 @@ def shift_by_one_time_step(tensor, initializer=None):
 
 ######### Create Dataset for Experiment###############
 def create_data_set(seq_len, n_input, itr=1, n_batch=600):
-    x = tf.random.uniform(shape=(seq_len, n_input)) * 0.25
-    y = tf.zeros(shape=(seq_len, 1))
+    x = tf.random.uniform(shape=(seq_len, n_input))[None] * 0.25
+    y = tf.zeros(shape=(1,seq_len, 1))
     return tf.data.Dataset.from_tensor_slices((x, y)).repeat(count=itr).batch(n_batch)
 
 
