@@ -218,9 +218,9 @@ def compute_dopamine(idx_cn, z, r_kernel=reward_kernel):
     return d #shape=(1,1000)
 
 
-def reg_loss(z, cn_idx, target_rate=0.001):
+def reg_loss(z, cn_idx, target_rate=0.005):
     av = tf.reduce_mean(z, axis=(0, 1))
-    gain = 5
+    gain = 1
     average_firing_rate_error = target_rate - av[cn_idx]
     regularization_loss = gain * tf.maximum(average_firing_rate_error, 0)
     return regularization_loss
