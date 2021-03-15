@@ -291,7 +291,7 @@ class Exp_model(keras.Model):
 class Leg_fit(keras.Model):
     """Custom model.fit for (Legenstein and al., 2008) learning rule"""
 
-    def __init__(self, model, cn_idx, target_rate=0.005):
+    def __init__(self, model, cn_idx, target_rate=0.001):
         super(Leg_fit, self).__init__()
         self.model = model
         assert cn_idx in np.arange(self.model.cell.units)
