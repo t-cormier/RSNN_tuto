@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import models as m
 
 
-
 ######## Constants #######
 time_sec = 10
 n_input=20
@@ -22,7 +21,7 @@ batch_size = 700 # time lapse between gradient applying (and length of eligibili
 ######## Init experiment ###########
 seq_len = 1000 * time_sec
 exp_model = m.Exp_model(n_recurrent, n_input, seq_len, batch_size)
-exp_model.load_weights('saved_model_w/')
+#exp_model.load_weights('saved_model_w/')
 dataset = m.create_data_set(seq_len, n_input, batch_size=batch_size)
 print('Dataset created')
 
@@ -35,13 +34,13 @@ tb_callbacks = tf.keras.callbacks.TensorBoard(log_dir = 'logs',
 
 
 ######### Train ####################@
-leg = m.Leg_fit(exp_model, cn_idx)
-cn_activity = m.Activity_metric(cn_idx, name='CN activity')
+leg = m.Leg_fit(exp_model)
+cn_activity = m.Activity_metric(cn_bool=True, name='CN activity')
 activity = m.Activity_metric(name='avg activity')
 opt = keras.optimizers.Adam(lr=1e-3)
 leg.compile(optimizer = opt, metrics=[cn_activity, activity])
 print('Model ready for training')
-leg.fit(dataset, epochs=epochs, callbacks=[tb_callbacks, earlystop_callback])
+leg.fit(dataset, epochs=epochs, callbacks=[tb_callbacks])
 print('Model trained')
 
-exp_model.save_weights('saved_model_w/')
+#exp_model.save_weights('saved_model_w/')
