@@ -142,8 +142,6 @@ class LIFCell(layers.Layer):
         old_r = state[1]
         old_z = state[2]
 
-
-
         no_autapse_w_rec = tf.where(self.disconnect_mask, tf.zeros_like(self.recurrent_weights), self.recurrent_weights)
 
         i_in = tf.matmul(inputs, self.input_weights, name='I_in')
@@ -176,11 +174,6 @@ class LIFCell(layers.Layer):
 
 ############# Metrics and gradients ################
 
-def compute_avg_activity(model, z):
-    av = tf.reduce_mean(z, axis=(0, 1))
-    return av # shape=(1,100)
-
-# TODO: PAPER etrace
 def compute_etrace(model, v, z):
 
     v_scaled = tf.identity((v - model.cell.threshold) / model.cell.threshold, name='v_scaled')
@@ -338,8 +331,8 @@ class Exp_model(keras.Model):
         self.init_volt = tf.Variable(self.cell.zero_state()[0], trainable=False, name='init_voltage')
         self.init_refrac = tf.Variable(self.cell.zero_state()[1], trainable=False, name='init_refractory')
         self.init_spike = tf.Variable(self.cell.zero_state()[2], trainable=False, name='init_spike')
-        self.cn = tf.Variable(101, trainable=False, dtype=tf.int32)
-        self.cn_search = True
+
+
 
 
     def call(self, inputs):
@@ -361,22 +354,25 @@ class Leg_fit(keras.Model):
         super(Leg_fit, self).__init__()
         self.model = model
 
+        self.cn = tf.Variable(101, trainable=False, dtype=tf.int32)
+        self.cn_search = True
+
 
     def train_step(self, data):
         x, y = data
         v, z = self.model(x) # z : (1, 700, 100)
         vars = self.model.trainable_variables
 
-        if self.model.cn_search :
+        if self.cn_search :
             avg_act = tf.reduce_mean(z, axis=(0,1)) # (100)
             cond = tf.logical_and(avg_act > 0.008, avg_act < 0.013) # (1,100)
             assert_cn = tf.debugging.assert_none_equal(tf.reduce_sum(tf.cast(cond, tf.int32)), 0, message='No neuron suitable, reroll')
             eligible = tf.cast(tf.where(cond), tf.int32)[0]
 
-            self.model.cn.assign(eligible[0])
-            self.model.cn_search = False
-            tf.debugging.assert_none_equal(self.model.cn.value(), 101, message='error 1 : cn idx not assigned')
-            self.compiled_metrics.update_state(self.model.cn.value(), z)
+            self.cn.assign(eligible[0])
+            self.cn_search = False
+            tf.debugging.assert_none_equal(self.cn.value(), 101, message='error 1 : cn idx not assigned')
+            self.compiled_metrics.update_state(self.cn.value(), z)
 
             fake_grads = [tf.zeros(shape=(self.model.cell.units, self.model.cell.units))]
             self.optimizer.apply_gradients(zip(fake_grads, vars))
@@ -386,11 +382,11 @@ class Leg_fit(keras.Model):
 
         else :
             #self.metrics.reset_states()
-            tf.debugging.assert_none_equal(self.model.cn.value(), 101, message='error 2 : cn idx not assigned')
-            self.compiled_metrics.update_state(self.model.cn.value(), z)
+            tf.debugging.assert_none_equal(self.cn.value(), 101, message='error 2 : cn idx not assigned')
+            self.compiled_metrics.update_state(self.cn.value(), z)
             # compute the gradients ( grad = - delta w_ji = - d(t) * e_ji )
             print('\rGraph computing .     ', end='')
-            dopa = leg_dopamine(self.model.cn.value(), z)
+            dopa = leg_dopamine(self.cn.value(), z)
             print('\rGraph computing . .   ', end='')
             etrace = leg_etrace(self.model, z)
             print('\rGraph computing . . . ', end='')
