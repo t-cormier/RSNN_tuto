@@ -1,0 +1,25 @@
+new value  spikeTemplatesSeed 5958
+new value  ipcontroller_host cluster1
+new value  runMode short
+new value  nTrainEpochs 2000
+new value  nTestEpochs 50
+new value  numpyRandomSeed 354093825
+new value  numRepetitionsTest 10
+Traceback (most recent call last):
+  File "SpeechRewardSTDPExperiment.py", line 404, in ?
+    exper.run("long_input")
+  File "/home/mammoth/dejan/pcsim/pypcsimplus/Experiment.py", line 28, in run
+    self.setup()        
+  File "/home/mammoth/dejan/pcsim/pypcsimplus/Experiment.py", line 54, in setup
+    self.setupModels()                
+  File "SpeechRewardSTDPExperiment.py", line 132, in setupModels
+    rc = self.prepareCluster()
+  File "SpeechRewardSTDPExperiment.py", line 97, in prepareCluster
+    self.IPcluster = Cluster(ClusterConfig(configFile= './clusterconf.py', controller=IPcontroller))
+  File "/home/mammoth/dejan/simtools/pyV1/cluster/cluster.py", line 104, in __init__
+    execfile(configFile,self)
+  File "./clusterconf.py", line 55, in ?
+    sshx = os.environ['RMSTDP_HOME'] + '/packages/sshx'
+  File "/usr/lib64/python2.4/UserDict.py", line 17, in __getitem__
+    def __getitem__(self, key): return self.data[key]
+KeyError: 'RMSTDP_HOME'

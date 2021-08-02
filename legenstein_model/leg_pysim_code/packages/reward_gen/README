@@ -1,0 +1,114 @@
+**************************************************************************************
+****       BETA version of a template to create PCSIM extension modules.          ****
+**************************************************************************************
+
+What is a PCSIM extension module?
+
+PCSIM extension module is a set of classes specified by the user which
+extend pcsim's basic functionality, For example, typically it should contain
+user defined neuron or synapse types, or classes derived from the construction framework 
+implementing custom network construction rules and algorithms, although there are not 
+any restrictions on the type of extensions that can be implemented.
+Python interfaces are automatically generated for the classes within
+the extension that the user enlists to be exposed. 
+
+
+Contents of the template
+------------------------
+
+./README                            			: This file
+./src                              				: Directory for the C++ source files
+./src/HHSquid.h                     			: point neuron model header
+./src/HHSquid.cpp                   			: point neuron model implementation (actually empty)
+./src/DynamicCurrSquareSynapse.h    			: some synapse header
+./src/DynamicCurrSquareSynapse.cpp  			: some synapse implementation (actually empty, the implementation is in the ancestor classes)  
+./cppunittests                      			: Directory for C++ unit tests 
+./cppunittests/DynamicCurrSquareSynapseTest.cpp : implementation of a c++ unittest example for the new synapse type 
+./cppunittests/DynamicCurrSquareSynapseTest.h   : header file of a c++ unittest example  for the new synapse type
+./pyunit                            			: Directory for  python unit tests (see pcsim/python/unittests for examples)
+./CMakeLists.txt                    			: the "Makefile" (input file for the Cmake build tool)
+./python_interface_specification.py 			: specification of python interface
+./module_recipe.cmake                           : specification of the c++ sources and other options
+                                                  for compilation of the extension modules
+./pcsim_extension.py                            : python script/tool for building the pcsim extension module
+
+Recipe to build your PCSIM extension module:
+------------------------------------------------------
+
+  0) Make sure you have the PCSIM_HOME environment variable pointing at your pcsim root directory 
+     (this is the directory containing the pcsim source release, i.e. the location of the build.py and setup.py scripts)
+     
+     Under linux, with a bash shell, one should write:     
+     export PCSIM_HOME=<your pcsim root directory>   
+     
+  1) Go to the location where you want to create a directory with the template, 
+     as a starting development environment to develop your own custom PCSIM extension module. 
+     
+     Then execute:
+     python ${PCSIM_HOME}/extension_template/pcsim_extension.py --module=<your-module-name> create_template
+     
+     This command copies the contents of the directory ${PCSIM_HOME}/extension_template to the directory ./<your-module-name>
+     
+     Now you have a development environment within which you can start developing your module.
+     The home directory of the development environment is ./<your-module-name>. 
+     
+  1) Implement your objects in the src directory.
+     There are already two classes implemented as an example.
+     After you examine the example classes to get an idea how to implement your own, 
+     you can remove the source files, or unlist the sources in module_recipe.cmake  file (see below). 
+     More information on how to define simobjects and other extensions you should find in the PCSIM user manual.
+      	 
+  2) Implement your unit tests in cppunittests and pyunit
+  
+  	 There is one c++ unittest implemented as an example.
+     After you examine the example testto get an idea how to implement your own, you should remove it 
+     from the test directory.
+     
+     More examples on how to define cppunittests and python unittests you can find in 
+     ${PCSIM_HOME}/cppunittests and ${PCSIM_HOME}/python/unittests
+     
+     See also the PCSIM user manual for additional information.
+  
+  3) Edit module_recipe.cmake file to reflect your needs, list the source files and specify the dependent modules.     
+     Edit python_interface_specification.py to tell which of your classes should be exposed at the python level.
+  
+  4) Now the actual build can be started.
+  
+     You should execute the following command in the home directory of your module's development environment 
+     (the location of the pcsim_extension.py file) :
+
+     python pcsim_extension.py build
+
+     There are other targets available which can be used during the development.
+     E.g. the command
+
+     python pcsim_extension.py <your-module-name>
+
+     just compiles the C++ classes where <your-module-name> is the name of your PCSIM 
+     extension module (see variable PCSIM_MODULE_NAME in CMakeLists.txt)
+
+  5) If the build step was successful you will find two files named
+  
+       lib<your-module-name>.so  : the compiled c++ library with the extensions (can be used within a pcsim simulation
+                                   implemented in c++ )
+                                                                                 )  
+       py<your-module-name>.so   : the python module with the extension classes exposed in python, to be used in python
+                                   ( it is dependent on the c++ library lib<your-module-name>.so )
+       
+     in the build sub-directory of your module's development environment.
+  
+  6) To make py<your-module-name> python available in python there are several options:
+
+       - use sys.path.append( ) in your python scripts to include the path <your-pcsim-module>/build
+       - let the environment variable PYTHONPATH contain <your-pcsim-module>/build
+       - copy py<your-module-name>.so to a place where python can find it (e.g. /usr/local/lib/python/site-packages)
+       
+  7) To make lib<your-module-name> available to the linker you can
+        - add the <your-pcsim-module>/build directory to the library path environment variable (under linux it's LD_LIBRARY_PATH)                   
+        - copy lib<your-module-name>.so to a place the linker can find it (e.g. under linux /usr/lib or /usr/local/lib or /usr/lib64)
+
+  8) When you import your module in python make sure that you **FIRST IMPORT THE PYPCSIM MODULE**, otherwise 
+     you can get some error messages. Your module depends on the pypcsim module, and it needs the 
+     python classes of the pypcsim module to be registered before the module is imported. 
+  
+

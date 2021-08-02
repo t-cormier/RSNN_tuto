@@ -1,0 +1,27 @@
+This directory contains the scripts for computer simulation 5 
+(with current-based synapses and no short-term plasticity) from
+
+	Legenstein R, Pecevski D, Maass W 2008 A Learning Theory 
+    for Reward-Modulated Spike-Timing-Dependent Plasticity with 
+    Application to Biofeedback. PLoS Computational Biology 4(10): e1000180, Oct, 2008 
+    
+The produced result is supplementary figure 9.
+
+To create these figures you need to:
+
+1. The simulation uses IPython parallel computing capabilities to parallelize execution 
+   of simulation tasks. To setup on which machines the ipython cluster should run, 
+   edit the clusterconf.py file.  
+   
+2. Execute:
+
+    start_simulation.py
+    
+    This is an executable file, you don't need to run 'python start_simulation.py'.
+    Wait until the simulation finishes. You can monitor the simulations in the sim.out file.
+
+4. Then, to create supplementary figure 9 run:
+   
+      ipython -pylab resultsPhasesLSMrewardSTDP.py
+      
+      
